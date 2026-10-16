@@ -1,163 +1,178 @@
 (() => {
   "use strict";
 
-  const socket = io();
+  const urls = Array.isArray(window.CHAT_SERVER_URLS)
+    ? window.CHAT_SERVER_URLS
+    : [window.location.origin];
 
-  const elements = {
-    connectionStatus: document.getElementById("connection-status"),
-    messages: document.getElementById("messages"),
-    emptyState: document.getElementById("empty-state"),
-    messageForm: document.getElementById("message-form"),
-    messageInput: document.getElementById("message-input"),
-    sendButton: document.getElementById("send-button"),
-    characterCount: document.getElementById("character-count"),
-    typingIndicator: document.getElementById("typing-indicator"),
-    membersList: document.getElementById("members-list"),
-    memberCount: document.getElementById("member-count"),
-    profileName: document.getElementById("profile-name"),
-    profileAvatar: document.getElementById("profile-avatar"),
-    changeNameButton: document.getElementById("change-name-button"),
-    usernameModal: document.getElementById("username-modal"),
-    usernameForm: document.getElementById("username-form"),
-    usernameInput: document.getElementById("username-input"),
-    usernameError: document.getElementById("username-error"),
-    joinButton: document.getElementById("join-button"),
-    toast: document.getElementById("toast")
-  };
+  const messages = document.getElementById("messages");
+  const form = document.getElementById("message-form");
+  const input = document.getElementById("message-input");
+  const sendButton = document.getElementById("send-button");
+  const status = document.getElementById("connection-status");
+  const statusDot = document.getElementById("status-dot");
+  const serverLabel = document.getElementById("server-label");
+  const members = document.getElementById("members-list");
+  const memberCount = document.getElementById("member-count");
+  const typing = document.getElementById("typing");
+  const modal = document.getElementById("username-modal");
+  const usernameForm = document.getElementById("username-form");
+  const usernameInput = document.getElementById("username-input");
+  const usernameError = document.getElementById("username-error");
+  const profileName = document.getElementById("profile-name");
+  const profileAvatar = document.getElementById("profile-avatar");
+  const changeName = document.getElementById("change-name");
 
-  const MAX_MESSAGE_LENGTH = 1000;
-  const MAX_USERNAME_LENGTH = 24;
-
+  let ws = null;
+  let username = localStorage.getItem("chat-username") || "";
+  let endpointIndex = 0;
   let joined = false;
-  let username = "";
+  let manuallyClosed = false;
+  let retryTimer = null;
   let typingTimer = null;
-  let toastTimer = null;
-  let typingUsers = new Set();
+  const seenMessages = new Set();
 
-  const savedUsername = localStorage.getItem("chat-username");
+  usernameInput.value = username;
+  if (!username) modal.classList.remove("hidden");
 
-  if (savedUsername) {
-    elements.usernameInput.value = savedUsername;
+  function setStatus(text, connected) {
+    status.textContent = text;
+    statusDot.style.background = connected ? "#4bd6a0" : "#e6b75b";
+    input.disabled = !connected || !joined;
+    sendButton.disabled = !connected || !joined;
   }
 
   function initials(name) {
-    return Array.from(name.trim())[0]?.toUpperCase() || "G";
+    return Array.from(name || "?")[0].toUpperCase();
   }
 
-  function showToast(message) {
-    elements.toast.textContent = message;
-    elements.toast.classList.add("visible");
-
-    clearTimeout(toastTimer);
-
-    toastTimer = setTimeout(() => {
-      elements.toast.classList.remove("visible");
-    }, 3000);
-  }
-
-  function setConnectionStatus(text, connected) {
-    elements.connectionStatus.textContent = text;
-
-    const dot = document.querySelector(".sidebar-footer .status-dot");
-
-    if (dot) {
-      dot.style.background = connected ? "var(--green)" : "var(--danger)";
+  function send(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(data));
     }
-
-    elements.messageInput.disabled = !connected || !joined;
-    elements.sendButton.disabled = !connected || !joined;
   }
 
-  function updateProfile(name) {
-    username = name;
+  function connect() {
+    clearTimeout(retryTimer);
 
-    elements.profileName.textContent = name;
-    elements.profileAvatar.textContent = initials(name);
+    if (!urls.length || manuallyClosed) return;
 
-    localStorage.setItem("chat-username", name);
-  }
+    const base = urls[endpointIndex % urls.length].replace(/\/+$/, "");
+    const socketUrl = base.replace(/^http/, "ws") + "/ws";
 
-  function joinChat(requestedName) {
-    const cleanName = requestedName.trim().replace(/\s+/g, " ");
+    setStatus("Connecting...", false);
+    serverLabel.textContent = "Connecting";
 
-    if (!cleanName) {
-      elements.usernameError.textContent = "Please enter a username.";
+    try {
+      ws = new WebSocket(socketUrl);
+    } catch (error) {
+      retryNext();
       return;
     }
 
-    if (cleanName.length > MAX_USERNAME_LENGTH) {
-      elements.usernameError.textContent =
-        `Your username must be ${MAX_USERNAME_LENGTH} characters or fewer.`;
-      return;
-    }
+    ws.onopen = () => {
+      setStatus("Connected", true);
+      serverLabel.textContent = base;
+      if (username) {
+        send({ type: "join", username });
+      } else {
+        modal.classList.remove("hidden");
+      }
+    };
 
-    elements.usernameError.textContent = "";
-    elements.joinButton.disabled = true;
-
-    socket.emit("user:join", cleanName, (response) => {
-      elements.joinButton.disabled = false;
-
-      if (!response?.ok) {
-        elements.usernameError.textContent =
-          response?.error || "Unable to join the chat.";
+    ws.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
         return;
       }
 
-      joined = true;
+      if (data.type === "joined") {
+        joined = true;
+        username = data.username;
+        localStorage.setItem("chat-username", username);
+        profileName.textContent = username;
+        profileAvatar.textContent = initials(username);
+        usernameInput.value = username;
+        usernameError.textContent = "";
+        modal.classList.add("hidden");
+        setStatus("Connected", true);
+        input.focus();
+      }
 
-      updateProfile(response.username);
+      if (data.type === "history") {
+        messages.replaceChildren();
+        seenMessages.clear();
+        (data.messages || []).forEach(renderMessage);
+      }
 
-      elements.usernameModal.classList.add("hidden");
+      if (data.type === "message") renderMessage(data.message);
 
-      setConnectionStatus("Connected", true);
-      elements.messageInput.focus();
-    });
-  }
+      if (data.type === "system") {
+        const item = document.createElement("p");
+        item.className = "system-message";
+        item.textContent = data.text;
+        messages.appendChild(item);
+        scrollDown();
+      }
 
-  elements.usernameForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    joinChat(elements.usernameInput.value);
-  });
+      if (data.type === "users") renderUsers(data.users || []);
 
-  elements.changeNameButton.addEventListener("click", () => {
-    if (joined) {
-      socket.disconnect();
+      if (data.type === "typing") {
+        if (data.typing) {
+          typing.textContent = `${data.username} is typing...`;
+          clearTimeout(typingTimer);
+          typingTimer = setTimeout(() => typing.textContent = "", 1500);
+        } else {
+          typing.textContent = "";
+        }
+      }
+
+      if (data.type === "error") usernameError.textContent = data.text;
+    };
+
+    ws.onerror = () => {
+      setStatus("Connection issue", false);
+    };
+
+    ws.onclose = () => {
       joined = false;
+      setStatus("Reconnecting...", false);
+      retryNext();
+    };
+  }
+
+  function retryNext() {
+    if (manuallyClosed) return;
+    endpointIndex = (endpointIndex + 1) % Math.max(urls.length, 1);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, 1500);
+  }
+
+  function scrollDown() {
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function renderMessage(message) {
+    if (!message || typeof message.text !== "string" || seenMessages.has(message.id)) {
+      return;
     }
 
-    elements.usernameInput.value = username;
-    elements.usernameModal.classList.remove("hidden");
-    elements.usernameError.textContent = "";
-    elements.usernameInput.focus();
-  });
+    seenMessages.add(message.id);
 
-  function formatTime(timestamp) {
-    const date = new Date(timestamp);
+    const empty = messages.querySelector(".empty");
+    if (empty) empty.remove();
 
-    if (Number.isNaN(date.getTime())) {
-      return "";
+    if (message.type === "system") {
+      const system = document.createElement("p");
+      system.className = "system-message";
+      system.textContent = message.text;
+      messages.appendChild(system);
+      scrollDown();
+      return;
     }
 
-    return date.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  }
-
-  function scrollToLatest() {
-    elements.messages.scrollTop = elements.messages.scrollHeight;
-  }
-
-  function renderSystemMessage(message) {
-    const item = document.createElement("div");
-
-    item.className = "system-message";
-    item.textContent = message.text;
-
-    elements.messages.appendChild(item);
-  }
-
-  function renderChatMessage(message) {
     const row = document.createElement("article");
     row.className = "message";
 
@@ -173,234 +188,112 @@
 
     const name = document.createElement("span");
     name.className = "message-name";
-    name.textContent = message.username;
+    name.textContent = message.username || "Guest";
 
     const time = document.createElement("time");
     time.className = "message-time";
-    time.textContent = formatTime(message.timestamp);
-    time.dateTime = message.timestamp;
+    time.textContent = new Date(message.timestamp * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+
+    const server = document.createElement("span");
+    server.className = "message-server";
+    server.textContent = message.server || "";
 
     const text = document.createElement("div");
     text.className = "message-text";
     text.textContent = message.text;
 
-    meta.append(name, time);
+    meta.append(name, time, server);
     content.append(meta, text);
     row.append(avatar, content);
-
-    elements.messages.appendChild(row);
+    messages.appendChild(row);
+    scrollDown();
   }
 
-  function addMessage(message) {
-    if (!message || typeof message.text !== "string") {
-      return;
-    }
+  function renderUsers(users) {
+    members.replaceChildren();
+    memberCount.textContent = String(users.length);
 
-    if (elements.emptyState) {
-      elements.emptyState.remove();
-      elements.emptyState = null;
-    }
-
-    if (message.type === "system") {
-      renderSystemMessage(message);
-    } else {
-      renderChatMessage(message);
-    }
-
-    while (elements.messages.children.length > 105) {
-      elements.messages.firstElementChild.remove();
-    }
-
-    scrollToLatest();
-  }
-
-  function loadHistory(messages) {
-    elements.messages.replaceChildren();
-    elements.emptyState = null;
-
-    if (!Array.isArray(messages) || messages.length === 0) {
-      const empty = document.createElement("div");
-
-      empty.className = "empty-state";
-
-      const icon = document.createElement("div");
-      icon.className = "empty-icon";
-      icon.textContent = "✉";
-
-      const heading = document.createElement("h3");
-      heading.textContent = "Your conversation starts here";
-
-      const paragraph = document.createElement("p");
-      paragraph.textContent = "Send the first message to get things going.";
-
-      empty.append(icon, heading, paragraph);
-      elements.messages.appendChild(empty);
-
-      elements.emptyState = empty;
-      return;
-    }
-
-    messages.forEach(addMessage);
-    scrollToLatest();
-  }
-
-  function renderMembers(members) {
-    elements.membersList.replaceChildren();
-
-    const safeMembers = Array.isArray(members) ? members : [];
-
-    elements.memberCount.textContent = String(safeMembers.length);
-
-    if (safeMembers.length === 0) {
+    if (!users.length) {
       const empty = document.createElement("p");
-
-      empty.className = "members-empty";
-      empty.textContent = "No one is online yet.";
-
-      elements.membersList.appendChild(empty);
+      empty.className = "empty";
+      empty.textContent = "No users online yet.";
+      members.appendChild(empty);
       return;
     }
 
-    safeMembers.forEach((member) => {
+    users.forEach((user) => {
       const row = document.createElement("div");
       row.className = "member";
 
       const avatar = document.createElement("div");
       avatar.className = "avatar";
-      avatar.textContent = initials(member.username);
+      avatar.textContent = initials(user.username);
 
       const details = document.createElement("div");
-      details.className = "member-details";
-
       const name = document.createElement("strong");
-      name.textContent = member.username;
+      name.textContent = user.username;
 
-      const status = document.createElement("span");
-      status.textContent = "● Online";
+      const server = document.createElement("small");
+      server.textContent = user.server || "Connected";
 
-      details.append(name, status);
+      details.append(name, server);
       row.append(avatar, details);
-
-      elements.membersList.appendChild(row);
+      members.appendChild(row);
     });
   }
 
-  function updateTypingIndicator() {
-    const names = [...typingUsers];
-
-    if (names.length === 0) {
-      elements.typingIndicator.textContent = "";
-    } else if (names.length === 1) {
-      elements.typingIndicator.textContent =
-        `${names[0]} is typing...`;
-    } else if (names.length === 2) {
-      elements.typingIndicator.textContent =
-        `${names[0]} and ${names[1]} are typing...`;
-    } else {
-      elements.typingIndicator.textContent =
-        "Several people are typing...";
-    }
-  }
-
-  function sendTypingStatus(isTyping) {
-    if (joined && socket.connected) {
-      socket.emit("typing:update", isTyping);
-    }
-  }
-
-  elements.messageInput.addEventListener("input", () => {
-    elements.characterCount.textContent =
-      `${elements.messageInput.value.length}/${MAX_MESSAGE_LENGTH}`;
-
-    sendTypingStatus(true);
-
-    clearTimeout(typingTimer);
-
-    typingTimer = setTimeout(() => {
-      sendTypingStatus(false);
-    }, 900);
-  });
-
-  elements.messageForm.addEventListener("submit", (event) => {
+  usernameForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    const name = usernameInput.value.trim().replace(/\s+/g, " ");
 
-    if (!joined || !socket.connected) {
-      showToast("Please wait for the chat connection.");
+    if (!name) {
+      usernameError.textContent = "Please enter a username.";
       return;
     }
 
-    const message = elements.messageInput.value.trim();
-
-    if (!message) {
+    if (name.length > 24) {
+      usernameError.textContent = "Usernames must be 24 characters or fewer.";
       return;
     }
 
-    if (message.length > MAX_MESSAGE_LENGTH) {
-      showToast("Your message is too long.");
-      return;
-    }
-
-    socket.emit("message:send", message, (response) => {
-      if (!response?.ok) {
-        showToast(response?.error || "Message could not be sent.");
-        return;
-      }
-
-      elements.messageInput.value = "";
-      elements.characterCount.textContent = `0/${MAX_MESSAGE_LENGTH}`;
-
-      clearTimeout(typingTimer);
-      sendTypingStatus(false);
-
-      elements.messageInput.focus();
-    });
-  });
-
-  socket.on("connect", () => {
-    setConnectionStatus("Connected", true);
-
-    if (joined) {
-      socket.emit("user:join", username, (response) => {
-        if (response?.ok) {
-          updateProfile(response.username);
-        }
-      });
-    }
-  });
-
-  socket.on("disconnect", () => {
-    setConnectionStatus("Reconnecting", false);
-    typingUsers.clear();
-    updateTypingIndicator();
-  });
-
-  socket.on("connect_error", () => {
-    setConnectionStatus("Connection error", false);
-  });
-
-  socket.on("history:load", loadHistory);
-
-  socket.on("message:new", addMessage);
-
-  socket.on("users:update", renderMembers);
-
-  socket.on("typing:update", (data) => {
-    if (!data || typeof data.username !== "string") {
-      return;
-    }
-
-    if (data.isTyping) {
-      typingUsers.add(data.username);
+    username = name;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      send({ type: "join", username });
     } else {
-      typingUsers.delete(data.username);
+      localStorage.setItem("chat-username", username);
+      connect();
     }
-
-    updateTypingIndicator();
   });
 
-  if (!savedUsername) {
-    elements.usernameModal.classList.remove("hidden");
-  } else {
-    elements.usernameModal.classList.remove("hidden");
-  }
+  changeName.addEventListener("click", () => {
+    usernameInput.value = username;
+    usernameError.textContent = "";
+    modal.classList.remove("hidden");
+    usernameInput.focus();
+  });
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text || !joined) return;
+
+    send({ type: "message", text });
+    input.value = "";
+    send({ type: "typing", typing: false });
+    input.focus();
+  });
+
+  input.addEventListener("input", () => {
+    send({ type: "typing", typing: input.value.length > 0 });
+  });
+
+  window.addEventListener("beforeunload", () => {
+    manuallyClosed = true;
+    if (ws) ws.close();
+  });
+
+  connect();
 })();
