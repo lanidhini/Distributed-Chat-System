@@ -44,7 +44,8 @@ def send_json(ws, data):
 def local_user_list():
     return [
         {"username": user["username"], "server": SERVER_ID}
-        for user in clients.values()
+        for user in clients.values ()
+        if user.get("username")
     ]
 
 
@@ -208,7 +209,7 @@ async def websocket_handler(request):
     await ws.prepare(request)
 
     username = None
-    clients[ws] = {"username": "Guest"}
+    clients[ws] = {"username": "None"}
 
     await send_json(ws, {
         "type": "history",
