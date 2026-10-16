@@ -2,198 +2,75 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta
-name="description"
-content="A modern real-time distributed chat application."
-
-
-
-  <title>Distributed Chat System</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap"
-    rel="stylesheet"
-  >
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simple Distributed Chat Website</title>
   <link rel="stylesheet" href="/styles.css">
-  <script src="/socket.io/socket.io.js" defer></script>
+  <script src="/config.js"></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main class="app-shell">
-<aside class="sidebar">
-  <div class="brand">
-    <div class="brand-icon">D</div>
-
-    <div>
-      <h1>Distributed</h1>
-      <p>CHAT SYSTEM</p>
-    </div>
-  </div>
-
-  <div class="sidebar-label">WORKSPACE</div>
-
-  <button class="nav-item active" type="button">
-    <span class="nav-icon">#</span>
-    <span>General chat</span>
-    <span class="nav-badge">LIVE</span>
-  </button>
-
-  <div class="sidebar-card">
-    <div class="sidebar-card-icon">✦</div>
-    <h3>Connected together.</h3>
-    <p>A shared space for conversations in real time.</p>
-  </div>
-
-  <div class="sidebar-footer">
-    <span class="status-dot"></span>
-    <span>Chat server</span>
-    <span id="connection-status">Connecting</span>
-  </div>
-</aside>
-
-<section class="chat-panel">
-
-  <header class="chat-header">
-    <div class="room-heading">
-      <div class="room-icon">#</div>
-
-      <div>
-        <h2>General chat</h2>
-        <p>Everyone is welcome here.</p>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">D</span>
+        <div><strong>Distributed Chat</strong><small>TWO-SERVER SYSTEM</small></div>
       </div>
-    </div>
+      <div class="room selected"># &nbsp; General chat</div>
+      <div class="sidebar-note">
+        <strong>Connected together.</strong>
+        <p>A shared space for real-time conversations across servers.</p>
+      </div>
+      <div class="connection"><span id="status-dot"></span>
+        <span id="connection-status">Connecting...</span>
+      </div>
+    </aside>
 
-    <div class="header-status">
-      <span class="status-dot"></span>
-      <span>Real-time messaging</span>
-    </div>
-  </header>
+    <section class="chat">
+      <header class="chat-header">
+        <div><h1># General chat</h1><p>Messages are shared between servers.</p></div>
+        <span class="pill" id="server-label">Connecting</span>
+      </header>
 
-  <section class="welcome-banner">
-    <div class="welcome-symbol">✦</div>
+      <div class="welcome">
+        <strong>Welcome to the conversation!</strong>
+        <p>Say hello to everyone, wherever they are connected.</p>
+      </div>
 
-    <div>
-      <h3>Welcome to the conversation</h3>
-      <p>Say hello, share ideas, and connect with everyone online.</p>
-    </div>
-  </section>
+      <section id="messages" class="messages" aria-live="polite">
+        <p class="empty">Join the chat to get started.</p>
+      </section>
+      <div id="typing" class="typing"></div>
 
-  <section
-    class="messages"
-    id="messages"
-    aria-label="Chat messages"
-    aria-live="polite"
-  >
-    <div class="empty-state" id="empty-state">
-      <div class="empty-icon">✉</div>
-      <h3>Your conversation starts here</h3>
-      <p>Send the first message to get things going.</p>
-    </div>
-  </section>
+      <form id="message-form" class="composer">
+        <input id="message-input" maxlength="1000"
+          placeholder="Write a message..." autocomplete="off" disabled>
+        <button id="send-button" type="submit" disabled>Send ➤</button>
+      </form>
+      <footer>Be kind. Keep the conversation respectful.</footer>
+    </section>
 
-  <div class="typing-area">
-    <span id="typing-indicator"></span>
-  </div>
-
-  <form class="message-form" id="message-form">
-    <label class="sr-only" for="message-input">
-      Type your message
-    </label>
-
-    <input
-      id="message-input"
-      name="message"
-      type="text"
-      maxlength="1000"
-      placeholder="Write a message..."
-      autocomplete="off"
-      disabled
-      required
-    >
-
-    <span class="character-count" id="character-count">0/1000</span>
-
-    <button class="send-button" id="send-button" type="submit" disabled>
-      <span>Send</span>
-      <span aria-hidden="true">➤</span>
-    </button>
-  </form>
-
-  <footer class="chat-footer">
-    <span>Be kind. Keep the conversation respectful.</span>
-    <span>Distributed Chat System</span>
-  </footer>
-
-</section>
-
-<aside class="members-panel">
-  <div class="members-header">
-    <div>
-      <h2>People</h2>
-      <p>Who's in the room</p>
-    </div>
-
-    <span class="member-count" id="member-count">0</span>
-  </div>
-
-  <div class="online-heading">
-    <span class="status-dot"></span>
-    ONLINE
-  </div>
-
-  <div class="members-list" id="members-list">
-    <p class="members-empty">Loading members...</p>
-  </div>
-
-  <div class="your-profile">
-    <div class="avatar profile-avatar" id="profile-avatar">G</div>
-
-    <div class="profile-details">
-      <strong id="profile-name">Guest</strong>
-      <span>You're here</span>
-    </div>
-
-    <button
-      type="button"
-      id="change-name-button"
-      class="change-name-button"
-      aria-label="Change username"
-      title="Change username"
-    >
-      ✎
-    </button>
-  </div>
-</aside>
+    <aside class="people">
+      <h2>People online <span id="member-count">0</span></h2>
+      <p class="subheading">CONNECTED USERS</p>
+      <div id="members-list"><p class="empty">Waiting for users...</p></div>
+      <div class="profile">
+        <div class="avatar" id="profile-avatar">?</div>
+        <div><strong id="profile-name">Not joined</strong><small>Your profile</small></div>
+        <button id="change-name" type="button" title="Change username">✎</button>
+      </div>
+    </aside>
   </main>
-  <div class="modal-backdrop" id="username-modal">
-    <form class="username-card" id="username-form">
-      <div class="modal-brand">D</div>
-  <h2>Join the conversation</h2>
 
-  <p>Choose a username so people know who's talking.</p>
-
-  <label for="username-input">Your username</label>
-
-  <input
-    id="username-input"
-    name="username"
-    type="text"
-    maxlength="24"
-    minlength="1"
-    placeholder="e.g. Alex"
-    autocomplete="nickname"
-    required
-  >
-
-  <p class="form-error" id="username-error" role="alert"></p>
-
-  <button type="submit" class="join-button" id="join-button">
-    Join chat <span aria-hidden="true">→</span>
-  </button>
-</form>
+  <div class="modal" id="username-modal">
+    <form class="modal-card" id="username-form">
+      <div class="logo big">D</div>
+      <h2>Join the conversation</h2>
+      <p>Choose a username to enter the chat.</p>
+      <label for="username-input">Username</label>
+      <input id="username-input" maxlength="24" required
+        placeholder="e.g. Alex" autocomplete="nickname">
+      <p id="username-error" class="error"></p>
+      <button id="join-button" type="submit">Join chat →</button>
+    </form>
   </div>
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
